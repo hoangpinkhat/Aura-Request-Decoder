@@ -17,6 +17,8 @@ import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.BadLocationException;
+import javax.swing.text.DefaultHighlighter;
+import javax.swing.text.Highlighter;
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyleConstants;
 import javax.swing.text.StyledDocument;
@@ -28,10 +30,17 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.GraphicsEnvironment;
+import java.awt.Rectangle;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 /**
  * Editable, syntax-highlighted editor for the Aura "decoded" view, with a toolbar
@@ -42,6 +51,11 @@ import java.awt.event.KeyEvent;
  */
 final class ColoredJsonEditor {
 
+    /** Above this document size, skip syntax highlighting to stay responsive. */
+    private static final int MAX_HIGHLIGHT_CHARS = 200_000;
+    /** Cap on highlighted find matches so huge result sets never freeze the UI. */
+    private static final int MAX_MATCHES = 5_000;
+
     private final AuraDecoder decoder;
     private final JTextPane textPane = new JTextPane();
     private final JScrollPane scrollPane;
@@ -51,7 +65,17 @@ final class ColoredJsonEditor {
     private final UndoManager undo = new UndoManager();
 
     private final JTextField findField = new JTextField(16);
+    private final JLabel findCount = new JLabel("0/0");
     private final JLabel status = new JLabel(" ");
+
+    // Find state
+    private final Highlighter.HighlightPainter matchPainter;
+    private final Highlighter.HighlightPainter currentPainter;
+    private final List<Integer> matchStarts = new ArrayList<>();
+    private final List<Object> matchTags = new ArrayList<>();
+    private Object currentTag;
+    private int matchLen;
+    private int currentIdx = -1;
 
     private boolean loading;     // content set programmatically
     private boolean applying;    // re-applying colours (guards reentrancy)
@@ -62,8 +86,13 @@ final class ColoredJsonEditor {
     ColoredJsonEditor(AuraDecoder decoder, boolean darkTheme) {
         this.decoder = decoder;
         this.styles = new Styles(darkTheme);
+        // Yellow-ish highlight for all matches; stronger amber for the current one.
+        this.matchPainter = new DefaultHighlighter.DefaultHighlightPainter(
+                darkTheme ? new Color(0x5A5200) : new Color(0xFFF176));
+        this.currentPainter = new DefaultHighlighter.DefaultHighlightPainter(
+                darkTheme ? new Color(0x9E6B00) : new Color(0xFFB300));
 
-        textPane.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        textPane.setFont(editorFont());
         textPane.setBackground(styles.background);
         textPane.setForeground(styles.defaultFg);
         textPane.setCaretColor(styles.defaultFg);
@@ -93,10 +122,13 @@ final class ColoredJsonEditor {
         textPane.setText(text);
         textPane.setCaretPosition(0);
         loading = false;
+        clearMatches();
+        findCount.setText("0/0");
         undo.discardAllEdits();
         modified = false;
         highlightNow();
-        showStatus(validateMessage());
+        if (!findField.getText().isEmpty()) refreshMatches();
+        else showStatus(validateMessage());
     }
 
     String getText() {
@@ -125,10 +157,20 @@ final class ColoredJsonEditor {
 
         bar.add(new JLabel(" Find: "));
         findField.setMaximumSize(new Dimension(220, 26));
+        findField.setToolTipText("Highlights all matches (Ctrl+F). Enter / Shift+Enter = next / prev.");
         bar.add(findField);
         bar.add(button("◀", "Previous match (Shift+Enter)", e -> find(false)));
         bar.add(button("▶", "Next match (Enter)", e -> find(true)));
+        findCount.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 2));
+        bar.add(findCount);
         bar.addSeparator();
+
+        // Live search: re-highlight as the query changes.
+        findField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e) { refreshMatches(); }
+            @Override public void removeUpdate(DocumentEvent e) { refreshMatches(); }
+            @Override public void changedUpdate(DocumentEvent e) { refreshMatches(); }
+        });
 
         JCheckBox wrapBox = new JCheckBox("Wrap");
         wrapBox.setToolTipText("Toggle line wrapping");
@@ -167,31 +209,85 @@ final class ColoredJsonEditor {
         showStatus("Copied " + wire.length() + " bytes (URL-encoded body) to clipboard");
     }
 
-    private void find(boolean forward) {
+    /** Recompute + highlight every match for the current query. Does not move the caret. */
+    private void refreshMatches() {
+        clearMatches();
         String q = findField.getText();
-        if (q.isEmpty()) return;
+        if (q.isEmpty()) {
+            findCount.setText("0/0");
+            showStatus(validateMessage());
+            return;
+        }
+
         String hay = getText().toLowerCase();
         String needle = q.toLowerCase();
-        int caret = textPane.getCaretPosition();
+        matchLen = q.length();
 
-        int idx;
-        if (forward) {
-            idx = hay.indexOf(needle, caret);
-            if (idx < 0) idx = hay.indexOf(needle); // wrap to top
-        } else {
-            int from = Math.max(0, caret - needle.length() - 1);
-            idx = hay.lastIndexOf(needle, from);
-            if (idx < 0) idx = hay.lastIndexOf(needle); // wrap to bottom
+        Highlighter h = textPane.getHighlighter();
+        int from = 0;
+        while (matchStarts.size() < MAX_MATCHES) {
+            int idx = hay.indexOf(needle, from);
+            if (idx < 0) break;
+            try {
+                matchTags.add(h.addHighlight(idx, idx + matchLen, matchPainter));
+                matchStarts.add(idx);
+            } catch (BadLocationException ignored) {
+            }
+            from = idx + matchLen;
         }
 
-        if (idx >= 0) {
-            textPane.requestFocusInWindow();
-            textPane.setCaretPosition(idx);
-            textPane.moveCaretPosition(idx + needle.length());
-            showStatus("Found at offset " + idx);
-        } else {
+        if (matchStarts.isEmpty()) {
+            currentIdx = -1;
+            findCount.setText("0/" + 0);
             showStatus("Not found: " + q);
+        } else {
+            currentIdx = 0;
+            showCurrent();
         }
+    }
+
+    /** Step to the next/previous match (with wrap-around) without touching the caret. */
+    private void find(boolean forward) {
+        if (findField.getText().isEmpty()) return;
+        if (matchStarts.isEmpty()) { refreshMatches(); return; }
+        int size = matchStarts.size();
+        currentIdx = forward ? (currentIdx + 1) % size : (currentIdx - 1 + size) % size;
+        showCurrent();
+    }
+
+    private void showCurrent() {
+        if (currentIdx < 0 || currentIdx >= matchStarts.size()) return;
+        Highlighter h = textPane.getHighlighter();
+        if (currentTag != null) {
+            h.removeHighlight(currentTag);
+            currentTag = null;
+        }
+        int start = matchStarts.get(currentIdx);
+        try {
+            currentTag = h.addHighlight(start, start + matchLen, currentPainter);
+        } catch (BadLocationException ignored) {
+        }
+        findCount.setText((currentIdx + 1) + "/" + matchStarts.size());
+        showStatus(matchStarts.size() + " match(es) for \"" + findField.getText() + "\"");
+        scrollTo(start);
+    }
+
+    private void scrollTo(int offset) {
+        try {
+            Rectangle r = textPane.modelToView2D(offset).getBounds();
+            if (r != null) textPane.scrollRectToVisible(r);
+        } catch (BadLocationException ignored) {
+        }
+    }
+
+    private void clearMatches() {
+        Highlighter h = textPane.getHighlighter();
+        for (Object tag : matchTags) h.removeHighlight(tag);
+        if (currentTag != null) h.removeHighlight(currentTag);
+        matchTags.clear();
+        matchStarts.clear();
+        currentTag = null;
+        currentIdx = -1;
     }
 
     private void setWrap(boolean on) {
@@ -250,7 +346,10 @@ final class ColoredJsonEditor {
         bind(textPane, KeyStroke.getKeyStroke(KeyEvent.VK_Z, menu), "undo", e -> undo());
         bind(textPane, KeyStroke.getKeyStroke(KeyEvent.VK_Y, menu), "redo", e -> redo());
         bind(textPane, KeyStroke.getKeyStroke(KeyEvent.VK_Z, menu | KeyEvent.SHIFT_DOWN_MASK), "redo2", e -> redo());
-        bind(textPane, KeyStroke.getKeyStroke(KeyEvent.VK_F, menu), "focusFind", e -> findField.requestFocusInWindow());
+        bind(textPane, KeyStroke.getKeyStroke(KeyEvent.VK_F, menu), "focusFind", e -> {
+            findField.requestFocusInWindow();
+            findField.selectAll();
+        });
         bind(textPane, KeyStroke.getKeyStroke(KeyEvent.VK_F, menu | KeyEvent.SHIFT_DOWN_MASK), "format", e -> format());
 
         // Enter / Shift+Enter inside the find field jumps to next / previous match.
@@ -269,7 +368,11 @@ final class ColoredJsonEditor {
     private void onEdit() {
         if (loading || applying) return;
         modified = true;
-        SwingUtilities.invokeLater(() -> { highlightNow(); showStatus(validateMessage()); });
+        SwingUtilities.invokeLater(() -> {
+            highlightNow();
+            if (!findField.getText().isEmpty()) refreshMatches(); // match offsets changed
+            else showStatus(validateMessage());
+        });
     }
 
     private void showStatus(String msg) {
@@ -292,6 +395,9 @@ final class ColoredJsonEditor {
             String text = doc.getText(0, doc.getLength());
             int n = text.length();
             doc.setCharacterAttributes(0, n, styles.def, true);
+
+            // Very large bodies: keep it plain so typing/scrolling stays responsive.
+            if (n > MAX_HIGHLIGHT_CHARS) return;
 
             int i = 0;
             boolean lineStart = true;
@@ -352,6 +458,17 @@ final class ColoredJsonEditor {
         }
     }
 
+    /** A clean monospaced font matching Burp's editor look, with safe fallbacks. */
+    private static Font editorFont() {
+        String[] prefs = {"Consolas", "JetBrains Mono", "DejaVu Sans Mono", "Menlo", "Courier New"};
+        Set<String> available = new HashSet<>(Arrays.asList(
+                GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames()));
+        for (String f : prefs) {
+            if (available.contains(f)) return new Font(f, Font.PLAIN, 14);
+        }
+        return new Font(Font.MONOSPACED, Font.PLAIN, 14);
+    }
+
     private static boolean keyword(String text, int i, String kw) {
         if (!text.startsWith(kw, i)) return false;
         int after = i + kw.length();
@@ -387,14 +504,14 @@ final class ColoredJsonEditor {
                 fg(header, 0x6A9955); StyleConstants.setBold(header, true);
             } else {
                 background = Color.WHITE;
-                defaultFg  = new Color(0x1E1E1E);
-                fg(def,    0x1E1E1E);
+                defaultFg  = new Color(0x1A1A1A);
+                fg(def,    0x1A1A1A);
                 fg(key,    0x0451A5);
                 fg(str,    0xA31515);
                 fg(num,    0x098658);
                 fg(kw,     0x0000FF);
-                fg(punct,  0x000000);
-                fg(header, 0x008000); StyleConstants.setBold(header, true);
+                fg(punct,  0x1A1A1A);
+                fg(header, 0x0E7C86); StyleConstants.setBold(header, true); // teal, like Burp header names
             }
         }
 

@@ -30,7 +30,9 @@ body ra dạng dễ đọc, cho bạn **chỉnh sửa trực tiếp**, rồi **t
 - ↩️ **Undo / Redo** (`Ctrl+Z` / `Ctrl+Y`) — thao tác tô màu không lọt vào lịch sử undo.
 - 🧹 **Format**: beautify + **validate** JSON, báo ngay field nào sai cú pháp.
 - 📋 **Copy encoded**: copy body đã URL-encode (bản sẽ gửi lên dây) ra clipboard.
-- 🔎 **Find** có wrap-around; **Wrap** bật/tắt xuống dòng; **status bar** báo trạng thái.
+- 🔎 **Find**: live-search, **tô vàng tất cả match**, đếm vị trí `index/tổng` (vd `3/12`),
+  `Enter`/`Shift+Enter` nhảy match kế/trước (wrap-around); **Wrap** bật/tắt xuống dòng.
+- 🖋️ **Font & màu** kiểu editor của Burp (Consolas), nhẹ mắt ở cả theme sáng/tối.
 - 📦 **Zero dependency** ngoài Montoya API — JSON parser/printer và editor đều tự viết.
 
 ## Hoạt động trong
