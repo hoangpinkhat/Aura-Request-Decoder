@@ -33,6 +33,11 @@ body ra dạng dễ đọc, cho bạn **chỉnh sửa trực tiếp**, rồi **t
 - 🔎 **Find**: live-search, **tô vàng tất cả match**, đếm vị trí `index/tổng` (vd `3/12`),
   `Enter`/`Shift+Enter` nhảy match kế/trước (wrap-around); **Wrap** bật/tắt xuống dòng.
 - 🖋️ **Font & màu** kiểu editor của Burp (Consolas), nhẹ mắt ở cả theme sáng/tối.
+- 🌐 **POST & GET**: decode cả `message` ở **body** (POST) lẫn **query string** (GET
+  `/aura?message=...`); sửa xong gửi lại đúng chỗ.
+- 🎯 **Active scan** (chuột phải trong tab): **selected value (insertion point)** — bôi đen
+  một giá trị rồi quét đúng insertion point đó (map về Range trong request thật); hoặc
+  **whole request**. Dồn vào một audit dùng chung.
 - 📦 **Zero dependency** ngoài Montoya API — JSON parser/printer và editor đều tự viết.
 
 ## Hoạt động trong

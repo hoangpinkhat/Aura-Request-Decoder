@@ -7,7 +7,9 @@ import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.JTextPane;
@@ -111,6 +113,32 @@ final class ColoredJsonEditor {
 
         wireDocument();
         wireKeyBindings();
+        wirePopup();
+    }
+
+    /** Callback khi người dùng chọn "Active scan" trong context menu. null = quét cả request. */
+    interface ScanHandler { void scan(String selectedValueOrNull); }
+
+    private ScanHandler scanHandler;
+
+    void setScanHandler(ScanHandler h) { this.scanHandler = h; }
+
+    private void wirePopup() {
+        JPopupMenu popup = new JPopupMenu();
+
+        JMenuItem scanSel = new JMenuItem("Active scan: selected value (insertion point)");
+        scanSel.addActionListener(e -> {
+            String sel = textPane.getSelectedText();
+            if (sel == null || sel.isEmpty()) { showStatus("Hãy bôi đen đúng 1 giá trị trước khi scan."); return; }
+            if (scanHandler != null) scanHandler.scan(sel.trim());
+        });
+        popup.add(scanSel);
+
+        JMenuItem scanAll = new JMenuItem("Active scan: whole request");
+        scanAll.addActionListener(e -> { if (scanHandler != null) scanHandler.scan(null); });
+        popup.add(scanAll);
+
+        textPane.setComponentPopupMenu(popup);
     }
 
     // --- public surface used by the Burp editor tab ----------------------
