@@ -493,25 +493,27 @@ final class ColoredJsonEditor {
 
         Styles(boolean dark) {
             if (dark) {
-                background = new Color(0x1E1E1E);
-                defaultFg  = new Color(0xD4D4D4);
-                fg(def,    0xD4D4D4);
-                fg(key,    0x9CDCFE);
-                fg(str,    0xCE9178);
-                fg(num,    0xB5CEA8);
-                fg(kw,     0x569CD6);
-                fg(punct,  0xD4D4D4);
-                fg(header, 0x6A9955); StyleConstants.setBold(header, true);
+                // One Dark - vivid on a soft dark background.
+                background = new Color(0x282C34);
+                defaultFg  = new Color(0xABB2BF);
+                fg(def,    0xABB2BF);
+                fg(key,    0x61AFEF); // blue
+                fg(str,    0x98C379); // green
+                fg(num,    0xD19A66); // orange
+                fg(kw,     0xC678DD); // purple
+                fg(punct,  0x56B6C2); // cyan
+                fg(header, 0xE5C07B); StyleConstants.setBold(header, true); // gold
             } else {
+                // Vivid light - bright and clean on white.
                 background = Color.WHITE;
-                defaultFg  = new Color(0x1A1A1A);
-                fg(def,    0x1A1A1A);
-                fg(key,    0x0451A5);
-                fg(str,    0xA31515);
-                fg(num,    0x098658);
-                fg(kw,     0x0000FF);
-                fg(punct,  0x1A1A1A);
-                fg(header, 0x0E7C86); StyleConstants.setBold(header, true); // teal, like Burp header names
+                defaultFg  = new Color(0x1E293B);
+                fg(def,    0x1E293B);
+                fg(key,    0x2563EB); // blue
+                fg(str,    0x16A34A); // green
+                fg(num,    0xEA580C); // orange
+                fg(kw,     0x9333EA); // purple
+                fg(punct,  0x0891B2); // cyan
+                fg(header, 0xDB2777); StyleConstants.setBold(header, true); // pink/magenta
             }
         }
 
