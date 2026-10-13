@@ -1,0 +1,15 @@
+# Build output (derived)
+/build/
+
+# Downloaded compile-only dependency (re-fetched by build.ps1)
+/lib/
+
+# Stray class files
+*.class
+
+# OS / IDE cruft
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+.vscode/
